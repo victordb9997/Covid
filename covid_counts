@@ -1,0 +1,68 @@
+#!/bin/bash
+raw_dir="/oceanus/collab/InternalJeff/users/vxd162/covid_rna"
+out_fastq_path="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/fastq"
+
+mkdir -p ${out_fastq_path}
+
+fastqc  -o ${out_fastq_path} -t 32 ${raw_dir}/*/*.fastq.gz
+
+multiqc -o ${out_fastq_path} ${out_fastq_path}
+
+
+
+sample_list="/oceanus/collab/InternalJeff/users/vxd162/sample.list"
+out_cutadapth_path="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/trimmed"
+out_STAR_path="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/STARoutput"
+ref_genome="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/GRCm39.primary_assembly.genome.fa.gz"  
+adapter_fwd="AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
+adapter_rev="AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"
+out_merged_files="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/merged_fastq"
+
+mkdir -p ${out_cutadapth_path} ${out_STAR_path} ${merged_fastq} 
+
+for sample_id in $(cat ${sample_list})
+do
+  cat ${raw_dir}/${sample_id}_L1*/${sample_id}_*_L001_R1_001.fastq.gz ${raw_dir}/${sample_id}_L2*/${sample_id}_*_L002_R1_001.fastq.gz > ${out_merged_files}/${sample_id}/${sample_id}_merged_R1.fastq.gz
+  cat ${raw_dir}/${sample_id}_L1*/${sample_id}_*_L001_R2_001.fastq.gz ${raw_dir}/${sample_id}_L2*/${sample_id}_*_L002_R2_001.fastq.gz > ${out_merged_files}/${sample_id}/${sample_id}_merged_R2.fastq.gz
+
+done
+
+trim_dir="./trimmed"           
+star_out_dir="./star_out"      
+ref_genome="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/GRCm39.primary_assembly.genome.fa.gz"  
+
+adapter_fwd="AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
+adapter_rev="AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"
+
+samples=("" "" "")
+
+mkdir -p "${trim_dir}" "${star_out_dir}"
+
+for sample in "${samples[@]}"; do
+    
+    cat ${raw_dir}/${sample}_L*_R1_001.fastq.gz > ${raw_dir}/${sample}_R1_merged.fastq.gz
+    cat ${raw_dir}/${sample}_L*_R2_001.fastq.gz > ${raw_dir}/${sample}_R2_merged.fastq.gz
+ 
+    cutadapt -a "${adapter_fwd}" -A "${adapter_rev}" \
+      --poly-a -q 20 -m 50 -j 8 \
+      -o ${trim_dir}/${sample}_R1_trimmed.fastq.gz \
+      -p ${trim_dir}/${sample}_R2_trimmed.fastq.gz \
+      ${raw_dir}/${sample}_R1_merged.fastq.gz ${raw_dir}/${sample}_R2_merged.fastq.gz \
+      > ${trim_dir}/${sample}_cutadapt.log
+
+    STAR --runThreadN 8 \
+         --genomeDir "${ref_genome}" \
+         --readFilesIn ${trim_dir}/${sample}_R1_trimmed.fastq.gz ${trim_dir}/${sample}_R2_trimmed.fastq.gz \
+         --readFilesCommand zcat \
+         --quantMode TranscriptomeSAM GeneCounts \
+         --outFileNamePrefix ${star_out_dir}/${sample}_ \
+         --outSAMtype BAM SortedByCoordinate
+   
+done
+
+
+
+
+
+
+
