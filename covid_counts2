@@ -1,0 +1,141 @@
+#!/bin/bash
+##############################################################################
+# covid_counts2.sh
+#
+# This pipeline:
+# 1. Creates a deduplicated sample list (short IDs) by scanning the raw data
+#    directories in covid_rna.
+# 2. Generates a STAR index from the reference genome if it doesn’t already exist.
+# 3. Runs FastQC and MultiQC on raw FASTQs.
+# 4. Merges FASTQs for each sample from lanes L1 and L2.
+# 5. Trims merged FASTQs with Cutadapt.
+# 6. Aligns trimmed reads with STAR.
+##############################################################################
+
+############################
+# 0) Set Directories & Files
+############################
+
+# Raw FASTQ directories (inside covid_rna)
+raw_dir="/oceanus/collab/InternalJeff/users/vxd162/covid/covid_rna"
+
+# Analysis directory (contains outputs, reference files, etc.)
+analysis_dir="/oceanus/collab/InternalJeff/users/vxd162/covid/covid_analysis"
+
+# Output directories
+fastq_out="${analysis_dir}/fastq"
+trimmed_out="${analysis_dir}/trimmed"
+merged_out="${analysis_dir}/merged_fastq"
+STAR_output="${analysis_dir}/STARoutput"
+STAR_index="${analysis_dir}/STAR_index"
+
+# Reference files (FASTA is gzipped; GTF file is uncompressed)
+ref_genome_gz="${analysis_dir}/GRCm39.primary_assembly.genome.fa.gz"
+ref_gtf="${analysis_dir}/GRCm39.annotation.gtf"
+
+# Adapter sequences
+adapter_fwd="AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
+adapter_rev="AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"
+
+# Where to store the sample list (short IDs)
+sample_list="${analysis_dir}/sample.list2.uniq"
+
+############################
+# 1) Create Required Directories
+############################
+mkdir -p "${fastq_out}" "${trimmed_out}" "${merged_out}" "${STAR_output}" "${STAR_index}"
+
+############################
+# 2) Create Sample List (Short IDs)
+############################
+if [ ! -f "${sample_list}" ]; then
+  echo "Creating sample list at ${sample_list}..."
+  # Change to raw data directory, list directories matching *_L1-* or *_L2-*
+  cd "${raw_dir}" || { echo "Cannot change directory to ${raw_dir}"; exit 1; }
+  ls -d *_L[12]-* 2>/dev/null | sed -E 's/_L[12]-.*//' | sort -u > "${sample_list}"
+  echo "Sample list created. Contents:"
+  cat "${sample_list}"
+else
+  echo "Sample list already exists at ${sample_list}."
+fi
+
+############################
+# 3) Generate STAR Index (if not already built)
+############################
+# STAR requires an uncompressed FASTA.
+ref_genome_unzipped="${analysis_dir}/GRCm39.primary_assembly.genome.fa"
+if [ ! -f "${STAR_index}/genomeParameters.txt" ]; then
+  echo "STAR index not found. Generating STAR index..."
+  if [ ! -f "${ref_genome_unzipped}" ]; then
+    echo "Unzipping reference genome..."
+    gunzip -c "${ref_genome_gz}" > "${ref_genome_unzipped}"
+  fi
+  STAR --runMode genomeGenerate \
+       --runThreadN 16 \
+       --genomeDir "${STAR_index}" \
+       --genomeFastaFiles "${ref_genome_unzipped}" \
+       --sjdbGTFfile "${ref_gtf}" \
+       --sjdbOverhang 100
+else
+  echo "STAR index already exists; skipping index generation."
+fi
+
+############################
+# 4) Run FastQC and MultiQC on Raw FASTQ Files
+############################
+echo "Running FastQC on raw FASTQs..."
+fastqc -o "${fastq_out}" -t 32 "${raw_dir}"/*/*.fastq.gz
+
+echo "Running MultiQC..."
+multiqc -o "${fastq_out}" "${fastq_out}"
+
+############################
+# 5) Merge FASTQs Per Sample
+############################
+echo "Merging FASTQs for each sample..."
+while read -r sample_id; do
+  echo "  Processing sample: ${sample_id}"
+  sample_merged_dir="${merged_out}/${sample_id}"
+  mkdir -p "${sample_merged_dir}"
+  
+  # Merge R1 FASTQs from lanes L1 and L2 (using wildcard to match '-ds.' suffix)
+  cat "${raw_dir}/${sample_id}_L1-"*/*_L001_R1_001.fastq.gz \
+      "${raw_dir}/${sample_id}_L2-"*/*_L002_R1_001.fastq.gz \
+      > "${sample_merged_dir}/${sample_id}_merged_R1.fastq.gz"
+      
+  # Merge R2 FASTQs from lanes L1 and L2
+  cat "${raw_dir}/${sample_id}_L1-"*/*_L001_R2_001.fastq.gz \
+      "${raw_dir}/${sample_id}_L2-"*/*_L002_R2_001.fastq.gz \
+      > "${sample_merged_dir}/${sample_id}_merged_R2.fastq.gz"
+done < "${sample_list}"
+
+############################
+# 6) Run Cutadapt and STAR Alignment
+############################
+echo "Starting trimming and alignment for each sample..."
+while read -r sample_id; do
+  echo "  Processing sample: ${sample_id}"
+  sample_merged_dir="${merged_out}/${sample_id}"
+  
+  # Trim adapters and poly-A tails with Cutadapt
+  cutadapt \
+    -a "${adapter_fwd}" -A "${adapter_rev}" \
+    --poly-a -q 20 -m 50 -j 8 \
+    -o "${trimmed_out}/${sample_id}_R1_trimmed.fastq.gz" \
+    -p "${trimmed_out}/${sample_id}_R2_trimmed.fastq.gz" \
+    "${sample_merged_dir}/${sample_id}_merged_R1.fastq.gz" \
+    "${sample_merged_dir}/${sample_id}_merged_R2.fastq.gz" \
+    > "${trimmed_out}/${sample_id}_cutadapt.log"
+  
+  # Align trimmed reads with STAR using the pre-built index
+  STAR --runThreadN 8 \
+       --genomeDir "${STAR_index}" \
+       --readFilesIn "${trimmed_out}/${sample_id}_R1_trimmed.fastq.gz" \
+                      "${trimmed_out}/${sample_id}_R2_trimmed.fastq.gz" \
+       --readFilesCommand zcat \
+       --quantMode TranscriptomeSAM GeneCounts \
+       --outFileNamePrefix "${STAR_output}/${sample_id}_" \
+       --outSAMtype BAM SortedByCoordinate
+done < "${sample_list}"
+
+echo "Pipeline complete!"
