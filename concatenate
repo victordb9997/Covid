@@ -1,0 +1,21 @@
+sample_list="/oceanus/collab/InternalJeff/users/vxd162/sample.list2"
+out_cutadapth_path="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/trimmed"
+out_STAR_path="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/STARoutput"
+ref_genome="/oceanus/collab/InternalJeff/users/vxd162/covid_rna/GRCm39.primary_assembly.genome.fa.gz"  
+adapter_fwd="AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
+adapter_rev="AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"
+out_merged_files="/oceanus/collab/InternalJeff/users/vxd162/covid_analysis/merged_fastq"
+
+mkdir -p ${out_cutadapth_path} ${out_STAR_path} ${out_merged_files} 
+
+for sample_id in $(cat ${sample_list})
+do
+cat ${raw_dir}/${sample_id}_L*_R1_001.fastq.gz > ${raw_dir}/${sample_id}/${sample_id}_R1_merged.fastq.gz
+cat ${raw_dir}/${sample_id}_L*_R2_001.fastq.gz > ${raw_dir}/${sample_id}/${sample_id}_R2_merged.fastq.gz
+ 
+#i=1++
+
+  #zcat ${raw_dir}/${sample_id}_L1-*/${sample_id}_S${i}_L001_R1_001.fastq.gz ${raw_dir}/${sample_id}_L2-*/${sample_id}_S${i}_L002_R1_001.fastq.gz > ${out_merged_files}/${sample_id}_merged_R1.fastq.gz
+ # zcat ${raw_dir}/${sample_id}_L1-*/${sample_id}_S${i}_L001_R2_001.fastq.gz ${raw_dir}/${sample_id}_L2-*/${sample_id}_S${i}_L002_R2_001.fastq.gz > ${out_merged_files}/${sample_id}_merged_R2.fastq.gz
+
+done
